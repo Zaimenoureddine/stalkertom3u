@@ -18,6 +18,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
+
 @app.post("/data")
 async def rpc_handler(request: Request):
     try:
