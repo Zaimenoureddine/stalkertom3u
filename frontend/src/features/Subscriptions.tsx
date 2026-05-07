@@ -2,14 +2,7 @@ import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogDescription, 
-  DialogHeader, 
-  DialogTitle, 
-  DialogFooter
-} from '../components/ui/dialog';
+
 import { rpcCall, invalidateCache } from '../api';
 import { cn } from '../lib/utils';
 import { 
@@ -22,8 +15,6 @@ import {
   CheckCircle2, 
   XCircle,
   Loader2,
-  Copy,
-  Check,
   Zap,
   Download
 } from 'lucide-react';
@@ -47,9 +38,6 @@ export function SubscriptionCard({ subscription, onDelete }: SubscriptionCardPro
   const [testing, setTesting] = useState(false);
   const [converting, setConverting] = useState(false);
   const [status, setStatus] = useState<{ success?: boolean; message?: string } | null>(null);
-  const [m3uContent, setM3uContent] = useState<string>('');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const handleTest = async () => {
     setTesting(true);
@@ -87,10 +75,9 @@ export function SubscriptionCard({ subscription, onDelete }: SubscriptionCardPro
         }
       });
       
-      setM3uContent(result.m3u_content);
       console.log("[ACTION_SUCCESS] convert_stalker_to_m3u", result.channel_count);
 
-      // Immediately trigger download instead of showing modal
+      // Trigger direct file download
       const blob = new Blob([result.m3u_content], { type: 'audio/mpegurl' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -107,23 +94,7 @@ export function SubscriptionCard({ subscription, onDelete }: SubscriptionCardPro
     }
   };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(m3uContent);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
-  const handleDownload = () => {
-    const blob = new Blob([m3uContent], { type: 'audio/mpegurl' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${subscription.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_playlist.m3u`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
 
   return (
     <>
@@ -228,36 +199,6 @@ export function SubscriptionCard({ subscription, onDelete }: SubscriptionCardPro
         </CardFooter>
       </Card>
 
-      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle>M3U Playlist Content</DialogTitle>
-            <DialogDescription>
-              Copy the content below to use in your preferred IPTV player (VLC, Kodi, etc).
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="flex-1 overflow-auto mt-4 rounded-md border border-white/10 bg-black/50 p-4">
-            <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap">
-              {m3uContent}
-            </pre>
-          </div>
-
-          <DialogFooter className="mt-6 flex justify-end gap-3">
-            <Button variant="outline" type="button" onClick={() => setIsModalOpen(false)}>
-              Close
-            </Button>
-            <Button onClick={handleDownload} variant="default" className="gap-2">
-              <Download className="h-4 w-4" />
-              Download .m3u
-            </Button>
-            <Button onClick={handleCopy} variant="secondary" className="gap-2">
-              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              {copied ? "Copied!" : "Copy"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }
