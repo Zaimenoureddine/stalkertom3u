@@ -214,7 +214,7 @@ def test_portal_connection(portal_url: str, mac: str, sn: str = '0000000000000',
         return {"success": False, "message": str(e)}
 
 def convert_stalker_to_m3u(portal_url: str, mac: str, sn: str = '0000000000000', device_id: str = ''):
-    """Fetch channels and format as M3U."""
+    """Fetch channels sorted by real category and format as M3U."""
     print(f"[BACKEND_START] convert_stalker_to_m3u: {portal_url}, mac={mac}")
     try:
         # 1. Handshake
@@ -224,86 +224,121 @@ def convert_stalker_to_m3u(portal_url: str, mac: str, sn: str = '0000000000000',
         token = hs_data.get("token")
         if not token:
             raise Exception("Handshake failed: No token received.")
-            
-        # 2. Profile check (optional but recommended for session)
+
+        # 2. Profile check
         print("[BACKEND_STEP] Profile check...")
         _stalker_request(portal_url, mac, {
-            "type": "stb", 
-            "action": "get_profile", 
+            "type": "stb",
+            "action": "get_profile",
             "token": token,
             "sn": sn,
             "device_id": device_id
         }, token=token)
-        
-        # 3. Get Channels
+
+        # 3. Fetch genre list → build id-to-name map
+        print("[BACKEND_STEP] Fetching genre list...")
+        genre_map = {}
+        try:
+            genre_data = _stalker_request(portal_url, mac, {
+                "type": "itv",
+                "action": "get_genres",
+                "token": token,
+                "JsHttpRequest": "1-json"
+            }, token=token)
+
+            genre_list = []
+            if isinstance(genre_data, list):
+                genre_list = genre_data
+            elif isinstance(genre_data, dict) and "data" in genre_data:
+                genre_list = genre_data["data"]
+
+            for g in genre_list:
+                gid = str(g.get("id", "")).strip()
+                gname = (g.get("title") or g.get("name") or "").strip()
+                if gid and gname:
+                    genre_map[gid] = gname
+
+            print(f"[BACKEND_STEP] Loaded {len(genre_map)} genres")
+        except Exception as ge:
+            print(f"[BACKEND_WARN] Could not fetch genres: {ge}. Falling back to channel-level genre fields.")
+
+        # 4. Get all channels
         print("[BACKEND_STEP] Fetching channels...")
-        channel_params = {
+        channel_data = _stalker_request(portal_url, mac, {
             "type": "itv",
             "action": "get_all_channels",
             "token": token,
             "JsHttpRequest": "1-json"
-        }
-        channel_data = _stalker_request(portal_url, mac, channel_params, token=token)
-        
+        }, token=token)
+
         channels = []
         if isinstance(channel_data, list):
             channels = channel_data
         elif isinstance(channel_data, dict) and "data" in channel_data:
             channels = channel_data["data"]
-            
+
         print(f"[BACKEND_STEP] Found {len(channels)} channels")
-        
-        # 4. Format as M3U
+
+        # 5. Resolve real category for each channel
+        def resolve_category(ch):
+            # Best: look up genre_id in our fetched genre map
+            for key in ("tv_genre_id", "genre_id", "tv_group_id", "group_id"):
+                gid = str(ch.get(key, "")).strip()
+                if gid and gid in genre_map:
+                    return genre_map[gid]
+            # Fallback: use the name field embedded in the channel object
+            for key in ("tv_genre_name", "genre_name", "group_name", "group_title"):
+                gname = (ch.get(key) or "").strip()
+                if gname:
+                    return gname
+            return "General"
+
+        # Sort by category first, then by channel name within each category
+        channels_sorted = sorted(
+            channels,
+            key=lambda ch: (resolve_category(ch).lower(), ch.get("name", "").lower())
+        )
+
+        # 6. Build M3U
         print("[BACKEND_STEP] Formatting M3U content...")
+        from urllib.parse import urlparse
+        parsed = urlparse(portal_url)
+        base_host = f"{parsed.scheme}://{parsed.netloc}"
+
         m3u_lines = ["#EXTM3U"]
-        
-        for ch in channels:
+
+        for ch in channels_sorted:
             name = ch.get("name", "Unknown Channel")
             cmd = ch.get("cmd", "")
             if not cmd:
                 continue
-            
-            # Extract stream ID from cmd (e.g., "ffmpeg http://..." or "ffrt http://...")
-            # Stalker 'cmd' usually looks like: "ffmpeg http://localhost/ch/12345" or "ffrt 12345"
-            # We want to extract the numeric ID or the last part of the path.
+
             stream_id = ""
             if " " in cmd:
-                parts = cmd.split(" ")
-                url_part = parts[-1]
-                if "/" in url_part:
-                    stream_id = url_part.split("/")[-1]
-                else:
-                    stream_id = url_part
-            
+                url_part = cmd.split(" ")[-1]
+                stream_id = url_part.split("/")[-1] if "/" in url_part else url_part
+
             if not stream_id:
-                # Fallback to create_link if we can't parse a direct ID
                 stream_url = f"{portal_url.rstrip('/')}/portal.php?type=itv&action=create_link&cmd={cmd}&token={token}"
             else:
-                # Construct the direct play URL format common for many providers:
-                # http://domain:port/play/live.php?mac=MAC&stream=ID&extension=ts
-                # We'll use the domain/port from the portal_url
-                from urllib.parse import urlparse
-                parsed = urlparse(portal_url)
-                base_host = f"{parsed.scheme}://{parsed.netloc}"
                 stream_url = f"{base_host}/play/live.php?mac={mac}&stream={stream_id}&extension=ts"
-            
-            # Additional metadata if available
+
             logo = ch.get("logo", "")
-            group = ch.get("tv_genre_name", "General")
-            
-            inf_line = f'#EXTINF:-1 tvg-logo="{logo}" group-title="{group}",{name}'
-            m3u_lines.append(inf_line)
+            group = resolve_category(ch)
+
+            m3u_lines.append(f'#EXTINF:-1 tvg-logo="{logo}" group-title="{group}",{name}')
             m3u_lines.append(stream_url)
-            
+
         m3u_content = "\n".join(m3u_lines)
-        
-        print(f"[BACKEND_SUCCESS] M3U conversion complete: {len(channels)} channels")
+        unique_cats = len(set(resolve_category(ch) for ch in channels_sorted))
+
+        print(f"[BACKEND_SUCCESS] M3U complete: {len(channels_sorted)} channels across {unique_cats} categories")
         return {
             "m3u_content": m3u_content,
-            "channel_count": len(channels),
+            "channel_count": len(channels_sorted),
             "portal_name": portal_url
         }
-        
+
     except Exception as e:
         print(f"[BACKEND_ERROR] convert_stalker_to_m3u failed: {str(e)}")
         raise
