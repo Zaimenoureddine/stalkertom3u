@@ -24,7 +24,8 @@ import {
   Loader2,
   Copy,
   Check,
-  Zap
+  Zap,
+  Download
 } from 'lucide-react';
 
 interface Subscription {
@@ -87,8 +88,18 @@ export function SubscriptionCard({ subscription, onDelete }: SubscriptionCardPro
       });
       
       setM3uContent(result.m3u_content);
-      setIsModalOpen(true);
       console.log("[ACTION_SUCCESS] convert_stalker_to_m3u", result.channel_count);
+
+      // Immediately trigger download instead of showing modal
+      const blob = new Blob([result.m3u_content], { type: 'audio/mpegurl' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${subscription.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_playlist.m3u`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     } catch (err) {
       console.error("[ACTION_ERROR] convert_stalker_to_m3u", err);
     } finally {
@@ -100,6 +111,18 @@ export function SubscriptionCard({ subscription, onDelete }: SubscriptionCardPro
     navigator.clipboard.writeText(m3uContent);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownload = () => {
+    const blob = new Blob([m3uContent], { type: 'audio/mpegurl' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${subscription.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_playlist.m3u`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -224,9 +247,13 @@ export function SubscriptionCard({ subscription, onDelete }: SubscriptionCardPro
             <Button variant="outline" type="button" onClick={() => setIsModalOpen(false)}>
               Close
             </Button>
-            <Button onClick={handleCopy} className="gap-2">
+            <Button onClick={handleDownload} variant="default" className="gap-2">
+              <Download className="h-4 w-4" />
+              Download .m3u
+            </Button>
+            <Button onClick={handleCopy} variant="secondary" className="gap-2">
               {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              {copied ? "Copied!" : "Copy to Clipboard"}
+              {copied ? "Copied!" : "Copy"}
             </Button>
           </DialogFooter>
         </DialogContent>
